@@ -8,7 +8,7 @@ from datetime import datetime
 from tensorflow.keras.models import load_model
 import os
 
-BASE = r"C:\Users\LENOVO"
+BASE = os.path.dirname(os.path.abspath(__file__))
 
 st.set_page_config(page_title="AI Attendance System", page_icon="🎓", layout="wide")
 
@@ -60,39 +60,37 @@ if page == "📷 Live Monitor":
     st.title("📷 Live Attendance Monitor")
     col1, col2 = st.columns([3,2])
     with col1:
-        run = st.checkbox("▶ Start Camera")
-        fp  = st.empty()
+        img_file = st.camera_input("Take Photo")
+        fp = st.empty()
     with col2:
         st.markdown("### Today Attendance")
         lp = st.empty()
-    if run:
-        cap = cv2.VideoCapture(0)
-        while run:
-            ret, frame = cap.read()
-            if not ret: break
-            gray  = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-            for (x,y,w,h) in faces:
-                roi     = gray[y:y+h, x:x+w]
-                flat    = cv2.resize(roi,(48,48)).flatten()/255.0
-                proba   = svm_model.predict_proba([flat])[0]
-                conf    = max(proba)
-                name    = label_encoder.classes_[np.argmax(proba)] if conf>0.6 else "Unknown"
-                color   = (0,255,0) if name!="Unknown" else (0,0,255)
-                emo_in  = cv2.resize(roi,(48,48)).reshape(1,48,48,1)/255.0
-                emotion = EMOTIONS[np.argmax(emotion_model.predict(emo_in,verbose=0))]
-                if name != "Unknown":
-                    mark_attendance(name, emotion)
-                cv2.rectangle(frame,(x,y),(x+w,y+h),color,2)
-                cv2.rectangle(frame,(x,y-50),(x+w,y),color,-1)
-                cv2.putText(frame,f"{name} ({conf*100:.0f}%)",(x+5,y-30),
-                            cv2.FONT_HERSHEY_SIMPLEX,0.6,(255,255,255),2)
-                cv2.putText(frame,emotion,(x+5,y-10),
-                            cv2.FONT_HERSHEY_SIMPLEX,0.5,(255,255,255),1)
-            fp.image(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB),
-                     channels="RGB", use_container_width=True)
-            lp.dataframe(get_attendance(), use_container_width=True, hide_index=True)
-        cap.release()
+
+    if img_file is not None:
+        file_bytes = np.asarray(bytearray(img_file.read()), dtype=np.uint8)
+        frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        gray  = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+        for (x,y,w,h) in faces:
+            roi     = gray[y:y+h, x:x+w]
+            flat    = cv2.resize(roi,(48,48)).flatten()/255.0
+            proba   = svm_model.predict_proba([flat])[0]
+            conf    = max(proba)
+            name    = label_encoder.classes_[np.argmax(proba)] if conf>0.6 else "Unknown"
+            color   = (0,255,0) if name!="Unknown" else (0,0,255)
+            emo_in  = cv2.resize(roi,(48,48)).reshape(1,48,48,1)/255.0
+            emotion = EMOTIONS[np.argmax(emotion_model.predict(emo_in,verbose=0))]
+            if name != "Unknown":
+                mark_attendance(name, emotion)
+            cv2.rectangle(frame,(x,y),(x+w,y+h),color,2)
+            cv2.rectangle(frame,(x,y-50),(x+w,y),color,-1)
+            cv2.putText(frame,f"{name} ({conf*100:.0f}%)",(x+5,y-30),
+                        cv2.FONT_HERSHEY_SIMPLEX,0.6,(255,255,255),2)
+            cv2.putText(frame,emotion,(x+5,y-10),
+                        cv2.FONT_HERSHEY_SIMPLEX,0.5,(255,255,255),1)
+        fp.image(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB),
+                 channels="RGB", use_container_width=True)
+        lp.dataframe(get_attendance(), use_container_width=True, hide_index=True)
 
 else:
     st.title("📊 Attendance Records")
