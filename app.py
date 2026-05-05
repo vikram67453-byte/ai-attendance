@@ -5,7 +5,7 @@ import sqlite3
 import pandas as pd
 from datetime import datetime
 from PIL import Image
-from fer import FER
+emotion = "neutral"
 import os
 
 BASE = os.path.dirname(os.path.abspath(__file__))
