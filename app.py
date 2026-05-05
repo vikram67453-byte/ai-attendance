@@ -1,27 +1,24 @@
 import streamlit as st
-import cv2
 import numpy as np
 import pickle
 import sqlite3
 import pandas as pd
 from datetime import datetime
-from tensorflow.keras.models import load_model
+from PIL import Image
 import os
 
 BASE = os.path.dirname(os.path.abspath(__file__))
+EMOTIONS = ["angry","disgust","fear","happy","neutral","sad","surprise"]
 
 st.set_page_config(page_title="AI Attendance System", page_icon="🎓", layout="wide")
 
 @st.cache_resource
 def load_models():
-    face_cascade  = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-    emotion_model = load_model(os.path.join(BASE, "emotion_model.keras"))
+    import tensorflow as tf
+    emotion_model = tf.keras.models.load_model(os.path.join(BASE, "emotion_model.keras"))
     svm_model     = pickle.load(open(os.path.join(BASE, "face_svm.pkl"), "rb"))
     label_encoder = pickle.load(open(os.path.join(BASE, "label_encoder.pkl"), "rb"))
-    return face_cascade, emotion_model, svm_model, label_encoder
-
-face_cascade, emotion_model, svm_model, label_encoder = load_models()
-EMOTIONS = ["angry","disgust","fear","happy","neutral","sad","surprise"]
+    return emotion_model, svm_model, label_encoder
 
 def init_db():
     conn = sqlite3.connect(os.path.join(BASE, "attendance.db"))
@@ -51,6 +48,20 @@ def get_attendance():
     conn.close()
     return df
 
+def process_image(img_array, emotion_model, svm_model, label_encoder):
+    from PIL import Image as PILImage
+    import numpy as np
+    gray = np.array(PILImage.fromarray(img_array).convert("L"))
+    face_size = (48, 48)
+    resized = np.array(PILImage.fromarray(gray).resize(face_size))
+    flat = resized.flatten() / 255.0
+    proba = svm_model.predict_proba([flat])[0]
+    conf  = max(proba)
+    name  = label_encoder.classes_[np.argmax(proba)] if conf > 0.6 else "Unknown"
+    emo_in  = resized.reshape(1, 48, 48, 1) / 255.0
+    emotion = EMOTIONS[np.argmax(emotion_model.predict(emo_in, verbose=0))]
+    return name, conf, emotion
+
 init_db()
 
 st.sidebar.markdown("## 🎓 AI Attendance")
@@ -58,39 +69,28 @@ page = st.sidebar.radio("Navigate", ["📷 Live Monitor", "📊 Attendance Recor
 
 if page == "📷 Live Monitor":
     st.title("📷 Live Attendance Monitor")
-    col1, col2 = st.columns([3,2])
+    col1, col2 = st.columns([3, 2])
     with col1:
-        img_file = st.camera_input("Take Photo")
-        fp = st.empty()
+        img_file = st.camera_input("📸 Take Photo for Attendance")
     with col2:
         st.markdown("### Today Attendance")
         lp = st.empty()
 
     if img_file is not None:
-        file_bytes = np.asarray(bytearray(img_file.read()), dtype=np.uint8)
-        frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        gray  = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-        for (x,y,w,h) in faces:
-            roi     = gray[y:y+h, x:x+w]
-            flat    = cv2.resize(roi,(48,48)).flatten()/255.0
-            proba   = svm_model.predict_proba([flat])[0]
-            conf    = max(proba)
-            name    = label_encoder.classes_[np.argmax(proba)] if conf>0.6 else "Unknown"
-            color   = (0,255,0) if name!="Unknown" else (0,0,255)
-            emo_in  = cv2.resize(roi,(48,48)).reshape(1,48,48,1)/255.0
-            emotion = EMOTIONS[np.argmax(emotion_model.predict(emo_in,verbose=0))]
+        try:
+            emotion_model, svm_model, label_encoder = load_models()
+            img = Image.open(img_file).convert("RGB")
+            img_array = np.array(img)
+            name, conf, emotion = process_image(img_array, emotion_model, svm_model, label_encoder)
             if name != "Unknown":
                 mark_attendance(name, emotion)
-            cv2.rectangle(frame,(x,y),(x+w,y+h),color,2)
-            cv2.rectangle(frame,(x,y-50),(x+w,y),color,-1)
-            cv2.putText(frame,f"{name} ({conf*100:.0f}%)",(x+5,y-30),
-                        cv2.FONT_HERSHEY_SIMPLEX,0.6,(255,255,255),2)
-            cv2.putText(frame,emotion,(x+5,y-10),
-                        cv2.FONT_HERSHEY_SIMPLEX,0.5,(255,255,255),1)
-        fp.image(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB),
-                 channels="RGB", use_container_width=True)
-        lp.dataframe(get_attendance(), use_container_width=True, hide_index=True)
+                st.success(f"✅ {name} marked! Emotion: {emotion} ({conf*100:.0f}%)")
+            else:
+                st.warning("⚠️ Face not recognized!")
+            st.image(img, caption=f"{name} - {emotion}", use_container_width=True)
+            lp.dataframe(get_attendance(), use_container_width=True, hide_index=True)
+        except Exception as e:
+            st.error(f"Error: {e}")
 
 else:
     st.title("📊 Attendance Records")
@@ -98,10 +98,10 @@ else:
     if df.empty:
         st.info("No records yet!")
     else:
-        c1,c2,c3 = st.columns(3)
+        c1, c2, c3 = st.columns(3)
         c1.metric("Total Records", len(df))
         c2.metric("Total People", df["name"].nunique())
-        c3.metric("Top Emotion",  df["emotion"].mode()[0])
+        c3.metric("Top Emotion", df["emotion"].mode()[0])
         st.dataframe(df, use_container_width=True, hide_index=True)
         st.bar_chart(df["emotion"].value_counts())
         st.download_button("⬇ Download CSV",
