@@ -5,7 +5,6 @@ import sqlite3
 import pandas as pd
 from datetime import datetime
 from PIL import Image
-emotion = "neutral"
 import os
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -16,8 +15,7 @@ st.set_page_config(page_title="AI Attendance System", page_icon="🎓", layout="
 def load_models():
     svm_model     = pickle.load(open(os.path.join(BASE, "face_svm.pkl"), "rb"))
     label_encoder = pickle.load(open(os.path.join(BASE, "label_encoder.pkl"), "rb"))
-    emotion_detector = FER()
-    return svm_model, label_encoder, emotion_detector
+    return svm_model, label_encoder
 
 def init_db():
     conn = sqlite3.connect(os.path.join(BASE, "attendance.db"))
@@ -63,7 +61,7 @@ if page == "📷 Live Monitor":
 
     if img_file is not None:
         try:
-            svm_model, label_encoder, emotion_detector = load_models()
+            svm_model, label_encoder = load_models()
             img = Image.open(img_file).convert("RGB")
             img_array = np.array(img)
             gray = np.array(Image.fromarray(img_array).convert("L"))
@@ -72,16 +70,13 @@ if page == "📷 Live Monitor":
             proba = svm_model.predict_proba([flat])[0]
             conf  = max(proba)
             name  = label_encoder.classes_[np.argmax(proba)] if conf > 0.6 else "Unknown"
-            emotions = emotion_detector.detect_emotions(img_array)
             emotion = "neutral"
-            if emotions:
-                emotion = max(emotions[0]["emotions"], key=emotions[0]["emotions"].get)
             if name != "Unknown":
                 mark_attendance(name, emotion)
-                st.success(f"✅ {name} marked! Emotion: {emotion} ({conf*100:.0f}%)")
+                st.success(f"✅ {name} marked! ({conf*100:.0f}%)")
             else:
                 st.warning("⚠️ Face not recognized!")
-            st.image(img, caption=f"{name} - {emotion}", use_container_width=True)
+            st.image(img, caption=f"{name}", use_container_width=True)
             lp.dataframe(get_attendance(), use_container_width=True, hide_index=True)
         except Exception as e:
             st.error(f"Error: {e}")
