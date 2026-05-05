@@ -5,20 +5,19 @@ import sqlite3
 import pandas as pd
 from datetime import datetime
 from PIL import Image
+from fer import FER
 import os
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-EMOTIONS = ["angry","disgust","fear","happy","neutral","sad","surprise"]
 
 st.set_page_config(page_title="AI Attendance System", page_icon="🎓", layout="wide")
 
 @st.cache_resource
 def load_models():
-    import tensorflow as tf
-    emotion_model = tf.keras.models.load_model(os.path.join(BASE, "emotion_model.keras"))
     svm_model     = pickle.load(open(os.path.join(BASE, "face_svm.pkl"), "rb"))
     label_encoder = pickle.load(open(os.path.join(BASE, "label_encoder.pkl"), "rb"))
-    return emotion_model, svm_model, label_encoder
+    emotion_detector = FER()
+    return svm_model, label_encoder, emotion_detector
 
 def init_db():
     conn = sqlite3.connect(os.path.join(BASE, "attendance.db"))
@@ -48,20 +47,6 @@ def get_attendance():
     conn.close()
     return df
 
-def process_image(img_array, emotion_model, svm_model, label_encoder):
-    from PIL import Image as PILImage
-    import numpy as np
-    gray = np.array(PILImage.fromarray(img_array).convert("L"))
-    face_size = (48, 48)
-    resized = np.array(PILImage.fromarray(gray).resize(face_size))
-    flat = resized.flatten() / 255.0
-    proba = svm_model.predict_proba([flat])[0]
-    conf  = max(proba)
-    name  = label_encoder.classes_[np.argmax(proba)] if conf > 0.6 else "Unknown"
-    emo_in  = resized.reshape(1, 48, 48, 1) / 255.0
-    emotion = EMOTIONS[np.argmax(emotion_model.predict(emo_in, verbose=0))]
-    return name, conf, emotion
-
 init_db()
 
 st.sidebar.markdown("## 🎓 AI Attendance")
@@ -78,10 +63,19 @@ if page == "📷 Live Monitor":
 
     if img_file is not None:
         try:
-            emotion_model, svm_model, label_encoder = load_models()
+            svm_model, label_encoder, emotion_detector = load_models()
             img = Image.open(img_file).convert("RGB")
             img_array = np.array(img)
-            name, conf, emotion = process_image(img_array, emotion_model, svm_model, label_encoder)
+            gray = np.array(Image.fromarray(img_array).convert("L"))
+            resized = np.array(Image.fromarray(gray).resize((48, 48)))
+            flat = resized.flatten() / 255.0
+            proba = svm_model.predict_proba([flat])[0]
+            conf  = max(proba)
+            name  = label_encoder.classes_[np.argmax(proba)] if conf > 0.6 else "Unknown"
+            emotions = emotion_detector.detect_emotions(img_array)
+            emotion = "neutral"
+            if emotions:
+                emotion = max(emotions[0]["emotions"], key=emotions[0]["emotions"].get)
             if name != "Unknown":
                 mark_attendance(name, emotion)
                 st.success(f"✅ {name} marked! Emotion: {emotion} ({conf*100:.0f}%)")
